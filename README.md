@@ -76,7 +76,7 @@ The example below includes the `--allow-sensitive-data-access` flag for accessin
 
 Verify your setup by running the `/tools` command in the Kiro CLI to see the available SageMaker Well-Architected MCP tools.
 
-Note that this is a basic quickstart. We recommend using the SageMaker Well-Architected MCP server in conjunction with [AWS API MCP Server](https://awslabs.github.io/mcp/servers/aws-api-mcp-server), [AWS Knowledge MCP Server](https://awslabs.github.io/mcp/servers/aws-knowledge-mcp-server)/[AWS Documentation MCP Server](https://awslabs.github.io/mcp/servers/aws-documentation-mcp-server), and [Amazon SageMaker AI MCP Server](https://awslabs.github.io/mcp/servers/sagemaker-ai-mcp-server) for complete SageMaker coverage.
+This server provides comprehensive Well-Architected validation for SageMaker workloads with 51 checks across all six pillars. For broader AWS API access and documentation lookup, you can also use [AWS API MCP Server](https://awslabs.github.io/mcp/servers/aws-api-mcp-server) and [AWS Documentation MCP Server](https://awslabs.github.io/mcp/servers/aws-documentation-mcp-server).
 
 ## Configurations
 
