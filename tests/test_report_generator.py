@@ -86,7 +86,7 @@ class TestGenerateHtmlReport:
             generate_html_report('ep-1', 'endpoint', SAMPLE_FINDINGS, {}, path)
             with open(path) as f:
                 content = f.read()
-            assert 'SageMaker Well-Architected Report' in content
+            assert 'SageMaker Well-Architected Review' in content
 
     def test_default_path(self):
         result = generate_html_report('ep-1', 'endpoint', SAMPLE_FINDINGS, {})
@@ -115,7 +115,7 @@ class TestGenerateBatchHtmlReport:
             )
             with open(path) as f:
                 content = f.read()
-            assert '2 resources' in content
+            assert '2 Resources Evaluated' in content
 
     def test_contains_all_pillars(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -136,4 +136,4 @@ class TestGenerateBatchHtmlReport:
             assert os.path.exists(result)
             with open(path) as f:
                 content = f.read()
-            assert 'SageMaker Well-Architected Report' in content
+            assert 'SageMaker Well-Architected Review' in content

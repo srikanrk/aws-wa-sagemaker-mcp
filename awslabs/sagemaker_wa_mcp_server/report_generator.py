@@ -22,11 +22,38 @@ import os
 PILLAR_ORDER = [
     'Security',
     'Reliability',
-    'Operational Excellence',
     'Performance Efficiency',
     'Cost Optimization',
+    'Operational Excellence',
     'Sustainability',
 ]
+
+PILLAR_SHORT = {
+    'Security': 'Security',
+    'Reliability': 'Reliability',
+    'Performance Efficiency': 'Performance',
+    'Cost Optimization': 'Cost',
+    'Operational Excellence': 'Ops Excellence',
+    'Sustainability': 'Sustainability',
+}
+
+PILLAR_ANCHORS = {
+    'Security': 'security',
+    'Reliability': 'reliability',
+    'Performance Efficiency': 'performance',
+    'Cost Optimization': 'cost',
+    'Operational Excellence': 'ops',
+    'Sustainability': 'sustainability',
+}
+
+PILLAR_CHECK_COUNTS = {
+    'Security': 14,
+    'Reliability': 10,
+    'Performance Efficiency': 6,
+    'Cost Optimization': 8,
+    'Operational Excellence': 8,
+    'Sustainability': 5,
+}
 
 PILLAR_ICONS = {
     'Security': '🔒',
@@ -35,15 +62,6 @@ PILLAR_ICONS = {
     'Performance Efficiency': '⚡',
     'Cost Optimization': '💰',
     'Sustainability': '🌱',
-}
-
-PILLAR_COLORS = {
-    'Security': '#e53935',
-    'Reliability': '#8e24aa',
-    'Operational Excellence': '#1e88e5',
-    'Performance Efficiency': '#f9a825',
-    'Cost Optimization': '#43a047',
-    'Sustainability': '#00897b',
 }
 
 
@@ -62,7 +80,7 @@ def generate_html_report(
         resource_name: Name of the validated resource
         resource_type: Type of the resource
         findings: List of finding dictionaries
-        summary: Summary dict mapping pillar names to severity counts
+        summary: Summary dict
         report_path: Optional path to write the report.
         account_id: AWS account ID
         region: AWS region name
@@ -71,7 +89,6 @@ def generate_html_report(
         Absolute path to the generated HTML report file
     """
     return _build_report(
-        title=f'{resource_type} — {resource_name}',
         resources=[f'{resource_type}/{resource_name}'],
         findings=findings,
         report_path=report_path,
@@ -102,7 +119,6 @@ def generate_batch_html_report(
         Absolute path to the generated HTML report file
     """
     return _build_report(
-        title=f'{len(resources_validated)} Resources',
         resources=resources_validated,
         findings=findings,
         report_path=report_path,
@@ -112,7 +128,6 @@ def generate_batch_html_report(
 
 
 def _build_report(
-    title: str,
     resources: list[str],
     findings: list[dict],
     report_path: str | None = None,
@@ -122,7 +137,6 @@ def _build_report(
     """Build the complete HTML report.
 
     Args:
-        title: Report title
         resources: List of resource identifiers
         findings: List of finding dicts
         report_path: Output file path
@@ -132,36 +146,55 @@ def _build_report(
     Returns:
         Absolute path to the generated HTML file
     """
-    ts = datetime.datetime.now(datetime.timezone.utc).strftime('%B %d, %Y at %H:%M UTC')
-    total = len(findings)
+    now = datetime.datetime.now(datetime.timezone.utc)
+    date_str = now.strftime('%B %d, %Y')
+    region_str = region or 'unknown'
+    account_str = account_id or 'unknown'
+    res_count = len(resources)
+
+    # Store region for console URL generation
+    _report_region = region_str
+
+    total_findings = len(findings)
     high = sum(1 for f in findings if f['severity'] == 'HIGH')
     med = sum(1 for f in findings if f['severity'] == 'MEDIUM')
     low = sum(1 for f in findings if f['severity'] == 'LOW')
 
+    # Calculate passed checks per pillar
     by_pillar: dict[str, list[dict]] = {}
     for f in findings:
         by_pillar.setdefault(f['pillar'], []).append(f)
 
+    total_checks = res_count * sum(PILLAR_CHECK_COUNTS.values())
+    passed = total_checks - total_findings
+
+    # Build per-resource findings
     by_resource: dict[str, list[dict]] = {}
     for f in findings:
         by_resource.setdefault(f['resource'], []).append(f)
 
     parts = [
         _css(),
-        _header(title, ts, len(resources), account_id, region),
-        _score_ring(high, med, low, total),
-        _severity_cards(high, med, low, total),
-        _pillar_heatmap(by_pillar),
+        _nav(account_str, date_str, region_str),
+        '<main>',
+        _header(account_str, date_str, region_str, res_count),
+        _stats_bar(res_count, total_findings, high, med, low, passed),
+        _exec_summary(res_count, total_findings, passed, high, by_pillar),
+        _donut_row(by_pillar, res_count),
     ]
 
-    if len(resources) > 1:
-        parts.append(_resource_table(by_resource))
-
+    # Pillar sections
     for pillar in PILLAR_ORDER:
-        if pillar in by_pillar:
-            parts.append(_pillar_section(pillar, by_pillar[pillar]))
+        pillar_findings = by_pillar.get(pillar, [])
+        parts.append(_pillar_section(pillar, pillar_findings, res_count, region_str))
 
-    parts.append(_footer(ts))
+    # Priority remediation
+    parts.append(_priority_section(findings, region_str))
+
+    # Resource details
+    parts.append(_resource_section(by_resource))
+
+    parts.append('</main>\n</body>\n</html>')
 
     content = '\n'.join(parts)
 
@@ -175,331 +208,416 @@ def _build_report(
 
 
 def _css() -> str:
-    """Generate the HTML head with dark theme CSS."""
+    """Generate the full HTML head with CSS."""
     return """<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>SageMaker Well-Architected Operational Review</title>
+<title>SageMaker Well-Architected Review</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
-:root{
-  --bg:#0f1117;--surface:#1a1d27;--surface2:#232733;--surface3:#2c3040;
-  --border:#333849;--text:#e4e7ef;--text2:#9ca3b8;--text3:#6b7280;
-  --high:#ef4444;--high-bg:rgba(239,68,68,.12);
-  --med:#f59e0b;--med-bg:rgba(245,158,11,.12);
-  --low:#3b82f6;--low-bg:rgba(59,130,246,.12);
-  --pass:#22c55e;--pass-bg:rgba(34,197,94,.12);
-  --accent:#818cf8;--accent-bg:rgba(129,140,248,.08);
-  --radius:12px;--radius-sm:8px;
-}
-body{
-  font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',sans-serif;
-  background:var(--bg);color:var(--text);line-height:1.6;min-height:100vh;
-}
-.container{max-width:1280px;margin:0 auto;padding:32px 24px}
-.header{
-  background:linear-gradient(135deg,#1e1b4b 0%,#312e81 50%,#3730a3 100%);
-  border-radius:var(--radius);padding:40px;margin-bottom:28px;
-  position:relative;overflow:hidden;
-}
-.header::before{
-  content:'';position:absolute;top:-50%;right:-20%;width:400px;height:400px;
-  background:radial-gradient(circle,rgba(129,140,248,.15) 0%,transparent 70%);
-}
-.header h1{font-size:28px;font-weight:700;letter-spacing:-.5px;margin-bottom:8px;position:relative;color:#fff}
-.header .meta{color:rgba(255,255,255,.7);font-size:14px;position:relative;display:flex;flex-wrap:wrap;gap:6px}
-.header .meta span{
-  display:inline-block;background:rgba(255,255,255,.1);padding:3px 12px;
-  border-radius:20px;font-size:12px;
-}
-.score-section{display:flex;align-items:center;gap:32px;margin-bottom:28px;
-  background:var(--surface);border-radius:var(--radius);padding:32px;border:1px solid var(--border)}
-.ring-container{position:relative;width:140px;height:140px;flex-shrink:0}
-.ring-container svg{transform:rotate(-90deg)}
-.ring-label{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);text-align:center}
-.ring-label .number{font-size:36px;font-weight:800;line-height:1}
-.ring-label .sub{font-size:12px;color:var(--text2);margin-top:2px}
-.sev-cards{display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin-bottom:28px}
-.sev-card{
-  background:var(--surface);border-radius:var(--radius);padding:20px 24px;
-  border:1px solid var(--border);position:relative;overflow:hidden;
-}
-.sev-card::after{content:'';position:absolute;top:0;left:0;right:0;height:3px}
-.sev-card.high::after{background:var(--high)}
-.sev-card.med::after{background:var(--med)}
-.sev-card.low::after{background:var(--low)}
-.sev-card.total::after{background:var(--accent)}
-.sev-card .val{font-size:32px;font-weight:800;line-height:1.2}
-.sev-card .lbl{font-size:12px;color:var(--text2);text-transform:uppercase;letter-spacing:1px;margin-top:4px}
-.sev-card.high .val{color:var(--high)}
-.sev-card.med .val{color:var(--med)}
-.sev-card.low .val{color:var(--low)}
-.sev-card.total .val{color:var(--accent)}
-.heatmap{background:var(--surface);border-radius:var(--radius);padding:28px;border:1px solid var(--border);margin-bottom:28px}
-.heatmap h2{font-size:18px;font-weight:600;margin-bottom:20px}
-.heatmap-grid{display:grid;grid-template-columns:repeat(6,1fr);gap:12px}
-.hm-cell{background:var(--surface2);border-radius:var(--radius-sm);padding:16px;text-align:center;border:1px solid var(--border);transition:transform .15s,box-shadow .15s}
-.hm-cell:hover{transform:translateY(-2px);box-shadow:0 8px 24px rgba(0,0,0,.3)}
-.hm-cell .icon{font-size:28px;margin-bottom:8px}
-.hm-cell .name{font-size:11px;color:var(--text2);text-transform:uppercase;letter-spacing:.5px;margin-bottom:10px;line-height:1.3}
-.hm-cell .counts{display:flex;justify-content:center;gap:6px}
-.hm-cell .dot{display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;border-radius:50%;font-size:12px;font-weight:700}
-.dot.h{background:var(--high-bg);color:var(--high)}
-.dot.m{background:var(--med-bg);color:var(--med)}
-.dot.l{background:var(--low-bg);color:var(--low)}
-.dot.zero{opacity:.3}
-.res-table{background:var(--surface);border-radius:var(--radius);border:1px solid var(--border);margin-bottom:28px;overflow:hidden}
-.res-table h2{font-size:18px;font-weight:600;padding:20px 24px;border-bottom:1px solid var(--border)}
-.res-table table{width:100%;border-collapse:collapse}
-.res-table th{text-align:left;padding:10px 24px;font-size:11px;color:var(--text3);text-transform:uppercase;letter-spacing:.8px;background:var(--surface2);border-bottom:1px solid var(--border)}
-.res-table td{padding:12px 24px;border-bottom:1px solid var(--border);font-size:14px}
-.res-table tr:last-child td{border-bottom:none}
-.res-table tr:hover td{background:var(--surface2)}
-.res-name{font-family:'SF Mono',SFMono-Regular,Consolas,monospace;font-size:13px}
-.pillar{background:var(--surface);border-radius:var(--radius);border:1px solid var(--border);margin-bottom:20px;overflow:hidden}
-.pillar-head{padding:20px 24px;display:flex;align-items:center;gap:14px;border-bottom:1px solid var(--border)}
-.pillar-head:hover{background:var(--surface2)}
-.pillar-head .pill-icon{font-size:24px}
-.pillar-head .pill-name{font-size:16px;font-weight:600;flex:1}
-.pillar-head .pill-count{font-size:13px;color:var(--text2);background:var(--surface3);padding:4px 12px;border-radius:20px}
-.pillar-head .pill-bar{width:120px;height:6px;background:var(--surface3);border-radius:3px;overflow:hidden;display:flex}
-.pillar-head .pill-bar span{height:100%}
-.pillar table{width:100%;border-collapse:collapse}
-.pillar th{text-align:left;padding:10px 24px;font-size:11px;color:var(--text3);text-transform:uppercase;letter-spacing:.8px;background:var(--surface2);border-bottom:1px solid var(--border)}
-.pillar td{padding:14px 24px;border-bottom:1px solid var(--border);font-size:14px;vertical-align:top}
-.pillar tr:last-child td{border-bottom:none}
-.pillar tr:hover td{background:rgba(255,255,255,.02)}
-.badge{display:inline-block;padding:3px 10px;border-radius:6px;font-size:11px;font-weight:700;letter-spacing:.5px}
-.badge-HIGH{background:var(--high-bg);color:var(--high)}
-.badge-MEDIUM{background:var(--med-bg);color:var(--med)}
-.badge-LOW{background:var(--low-bg);color:var(--low)}
-.check-id{font-family:'SF Mono',SFMono-Regular,Consolas,monospace;font-size:12px;color:var(--accent);background:var(--accent-bg);padding:2px 8px;border-radius:4px}
-.detail{color:var(--text);line-height:1.5}
-.rec{margin-top:6px;font-size:13px;color:var(--text2);padding-left:16px;border-left:2px solid var(--border)}
-.resource-tag{font-size:12px;color:var(--text3);font-family:'SF Mono',SFMono-Regular,Consolas,monospace}
-.footer{text-align:center;padding:24px;color:var(--text3);font-size:12px;border-top:1px solid var(--border);margin-top:12px}
-@media(max-width:900px){
-  .heatmap-grid{grid-template-columns:repeat(3,1fr)}
-  .sev-cards{grid-template-columns:repeat(2,1fr)}
-  .score-section{flex-direction:column;text-align:center}
-}
-@media(max-width:600px){
-  .heatmap-grid{grid-template-columns:repeat(2,1fr)}
-  .sev-cards{grid-template-columns:1fr 1fr}
-  .container{padding:16px}
+body{font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;display:flex;min-height:100vh;background:#f5f6fa;color:#2d3436;font-size:14px;-webkit-font-smoothing:antialiased}
+nav{width:240px;background:#1e272e;color:#fff;position:fixed;top:0;left:0;height:100vh;overflow-y:auto;z-index:10}
+nav .logo{padding:24px 20px;border-bottom:1px solid #485460;font-size:14px}
+nav .logo h2{font-size:18px;margin-bottom:4px}
+nav .logo span{color:#a4b0be;font-size:12px}
+nav ul{list-style:none;padding:12px 0}
+nav li a{display:block;padding:10px 20px;color:#d2dae2;text-decoration:none;font-size:13px;border-left:3px solid transparent;transition:.2s;font-weight:400}
+nav li a:hover,nav li a.active{background:#485460;border-left-color:#0984e3;color:#fff}
+nav li.section-label{padding:16px 20px 6px;font-size:10px;text-transform:uppercase;letter-spacing:1px;color:#808e9b}
+main{margin-left:240px;flex:1;padding:32px;max-width:1200px}
+.stats-bar{display:flex;gap:16px;margin-bottom:28px;flex-wrap:wrap}
+.stat-card{background:#fff;border-radius:8px;padding:18px 22px;flex:1;min-width:140px;box-shadow:0 1px 3px rgba(0,0,0,.08)}
+.stat-card .num{font-size:28px;font-weight:700;letter-spacing:-.5px}
+.stat-card .label{font-size:11px;color:#636e72;margin-top:2px;font-weight:500;text-transform:uppercase;letter-spacing:.3px}
+.stat-card.high .num{color:#d63031}
+.stat-card.med .num{color:#e17055}
+.stat-card.low .num{color:#f39c12}
+.stat-card.pass .num{color:#00b894}
+h1{font-size:24px;margin-bottom:4px;font-weight:700;letter-spacing:-.3px}
+h2{font-size:18px;margin:32px 0 16px;padding-bottom:8px;border-bottom:2px solid #dfe6e9;font-weight:600;letter-spacing:-.2px}
+h3{font-size:15px;margin:20px 0 10px;font-weight:600}
+.badge{display:inline-block;padding:2px 10px;border-radius:12px;font-size:11px;font-weight:600;color:#fff}
+.badge.high{background:#d63031}.badge.medium{background:#e17055}.badge.low{background:#f39c12}.badge.pass{background:#00b894}
+table{width:100%;border-collapse:collapse;margin:12px 0 24px;background:#fff;border-radius:8px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,.06)}
+th{background:#f8f9fa;text-align:left;padding:10px 14px;font-size:12px;text-transform:uppercase;letter-spacing:.5px;color:#636e72;border-bottom:2px solid #dfe6e9}
+td{padding:10px 14px;font-size:13px;border-bottom:1px solid #f1f2f6;line-height:1.5}
+tr:last-child td{border-bottom:none}
+tr:hover{background:#f8f9fa}
+.pillar-row{display:flex;gap:16px;flex-wrap:wrap;margin:20px 0 32px}
+.pillar-card{background:#fff;border-radius:8px;padding:20px;text-align:center;box-shadow:0 1px 3px rgba(0,0,0,.08);min-width:150px;flex:1}
+.pillar-card .p-icon{font-size:32px;margin-bottom:8px}
+.pillar-card .p-name{font-size:12px;font-weight:600;color:#2d3436;text-transform:uppercase;letter-spacing:.5px;margin-bottom:10px}
+.pillar-card .p-counts{display:flex;justify-content:center;gap:8px}
+.pillar-card .cnt{display:inline-flex;align-items:center;justify-content:center;width:32px;height:32px;border-radius:50%;font-size:13px;font-weight:700}
+.cnt-h{background:#ffeaea;color:#d63031}
+.cnt-m{background:#fff3e0;color:#e17055}
+.cnt-l{background:#fff8e1;color:#f39c12}
+.cnt-p{background:#e8f8f5;color:#00b894}
+.cnt-zero{opacity:.3}
+details{background:#fff;border-radius:8px;margin:10px 0;box-shadow:0 1px 3px rgba(0,0,0,.06)}
+details summary{padding:14px 18px;cursor:pointer;font-weight:600;font-size:14px;list-style:none;display:flex;align-items:center;gap:8px;letter-spacing:-.1px}
+details summary::before{content:'▶';font-size:10px;transition:.2s}
+details[open] summary::before{transform:rotate(90deg)}
+details .detail-body{padding:0 18px 16px}
+.priority-list{counter-reset:pri}
+.priority-item{background:#fff;border-radius:8px;padding:16px 18px;margin:10px 0;box-shadow:0 1px 3px rgba(0,0,0,.06);display:flex;gap:14px;align-items:flex-start}
+.priority-item::before{counter-increment:pri;content:counter(pri);background:#d63031;color:#fff;border-radius:50%;min-width:28px;height:28px;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:700}
+.meta{font-size:11px;color:#636e72}
+.meta li{padding:2px 0}
+.meta li code{background:#f1f2f6;padding:1px 6px;border-radius:3px;font-size:11px}
+.rec{background:#ffeaa7;border-radius:4px;padding:6px 10px;font-size:12px;margin-top:6px}
+@media print{
+nav{display:none}main{margin-left:0;padding:20px}
+.stat-card,.donut-card,details,table{break-inside:avoid}
+body{background:#fff}details[open]{break-inside:avoid}
 }
 </style>
 </head>
-<body>
-<div class="container">"""
+<body>"""
 
 
-def _header(
-    title: str, ts: str, resource_count: int, account_id: str | None, region: str | None
+def _nav(account: str, date_str: str, region: str) -> str:
+    """Generate the sidebar navigation."""
+    pillar_links = '\n'.join(
+        f'<li><a href="#{PILLAR_ANCHORS[p]}">{p}</a></li>' for p in PILLAR_ORDER
+    )
+    return f"""<nav>
+<div class="logo"><h2>{html.escape(account)}</h2><span>Well-Architected Review<br>{date_str} · {html.escape(region)}</span></div>
+<ul>
+<li class="section-label">Overview</li>
+<li><a href="#exec">Executive Summary</a></li>
+<li><a href="#stats">Statistics</a></li>
+<li class="section-label">Pillars</li>
+{pillar_links}
+<li class="section-label">Actions</li>
+<li><a href="#priority">Top Priority Remediation</a></li>
+<li><a href="#resources">Resource Details</a></li>
+</ul>
+</nav>"""
+
+
+def _header(account: str, date_str: str, region: str, res_count: int) -> str:
+    """Generate the page header."""
+    return f"""<div style="background:linear-gradient(135deg,#232f3e 0%,#37475a 100%);border-radius:10px;padding:32px 36px;margin-bottom:28px;color:#fff">
+<h1 style="font-size:26px;font-weight:700;margin-bottom:8px;color:#fff">SageMaker Well-Architected Review</h1>
+<div style="display:flex;gap:20px;flex-wrap:wrap;font-size:13px;opacity:.85">
+<span>🏢 {html.escape(account)}</span>
+<span>🌍 {html.escape(region)}</span>
+<span>📅 {date_str}</span>
+<span>📦 {res_count} Resources Evaluated</span>
+</div>
+</div>"""
+
+
+def _stats_bar(res_count: int, total: int, high: int, med: int, low: int, passed: int) -> str:
+    """Generate the top stats bar."""
+    return f"""<div id="stats" class="stats-bar">
+<div class="stat-card"><div class="num">{res_count}</div><div class="label">Total Resources</div></div>
+<div class="stat-card"><div class="num">{total}</div><div class="label">Total Findings</div></div>
+<div class="stat-card high"><div class="num">{high}</div><div class="label">High Severity</div></div>
+<div class="stat-card med"><div class="num">{med}</div><div class="label">Medium Severity</div></div>
+<div class="stat-card low"><div class="num">{low}</div><div class="label">Low Severity</div></div>
+</div>"""
+
+
+def _exec_summary(
+    res_count: int, total_findings: int, passed: int, high: int, by_pillar: dict
 ) -> str:
-    """Generate the HTML header section."""
-    account_badge = f'<span>🏢 Account: {html.escape(account_id)}</span>' if account_id else ''
-    region_badge = f'<span>🌍 Region: {html.escape(region)}</span>' if region else ''
-    return f"""<div class="header">
-  <h1>SageMaker Well-Architected Report</h1>
-  <p class="meta">
-    {account_badge}
-    {region_badge}
-    <span>📦 {resource_count} resource{'s' if resource_count != 1 else ''} scanned</span>
-    <span>🕐 {ts}</span>
-  </p>
-</div>"""
+    """Generate the executive summary paragraph."""
+    total_checks = passed + total_findings
+    pass_pct = int(passed / total_checks * 100) if total_checks else 0
+
+    # Find pillars with most HIGH findings
+    worst = sorted(
+        by_pillar.items(),
+        key=lambda x: sum(1 for f in x[1] if f['severity'] == 'HIGH'),
+        reverse=True,
+    )
+    worst_names = [p for p, _ in worst[:2] if any(f['severity'] == 'HIGH' for f in _)]
+
+    worst_text = ''
+    if worst_names:
+        worst_text = f" {' and '.join(worst_names)} {'have' if len(worst_names) > 1 else 'has'} the most critical gaps."
+
+    # Find top HIGH check types
+    high_checks: dict[str, int] = {}
+    for f in [f for fs in by_pillar.values() for f in fs if f['severity'] == 'HIGH']:
+        high_checks[f['check']] = high_checks.get(f['check'], 0) + 1
+    top_checks = sorted(high_checks.items(), key=lambda x: x[1], reverse=True)[:3]
+    check_text = ', '.join(c.replace('-', ' ').replace('no ', '').replace('no-', '') for c, _ in top_checks)
+
+    return f"""<h2 id="exec">Executive Summary</h2>
+<p style="margin-bottom:16px">This report evaluates {res_count} SageMaker resources across all six Well-Architected pillars. Of {total_checks} total checks performed, {passed} passed ({pass_pct}%), while {total_findings} produced findings requiring attention.{worst_text} Immediate action is recommended for the {high} HIGH severity findings{f', particularly around {check_text}' if check_text else ''}.</p>"""
 
 
-def _score_ring(high: int, med: int, low: int, total: int) -> str:
-    """Generate the SVG donut chart section."""
-    if total == 0:
-        return ''
-    r = 58
-    circ = 2 * 3.14159 * r
-    h_pct = high / total if total else 0
-    m_pct = med / total if total else 0
-    l_pct = low / total if total else 0
-    h_len = circ * h_pct
-    m_len = circ * m_pct
-    l_len = circ * l_pct
-    h_off = 0
-    m_off = h_len
-    l_off = h_len + m_len
-
-    if high == 0 and med == 0:
-        grade, grade_color = 'Excellent', 'var(--pass)'
-    elif high == 0 and med <= 3:
-        grade, grade_color = 'Good', 'var(--low)'
-    elif high <= 2:
-        grade, grade_color = 'Fair', 'var(--med)'
-    else:
-        grade, grade_color = 'Needs Work', 'var(--high)'
-
-    return f"""<div class="score-section">
-  <div class="ring-container">
-    <svg width="140" height="140" viewBox="0 0 140 140">
-      <circle cx="70" cy="70" r="{r}" fill="none" stroke="var(--surface3)" stroke-width="12"/>
-      <circle cx="70" cy="70" r="{r}" fill="none" stroke="var(--low)" stroke-width="12"
-        stroke-dasharray="{l_len:.1f} {circ:.1f}" stroke-dashoffset="-{l_off:.1f}" stroke-linecap="round"/>
-      <circle cx="70" cy="70" r="{r}" fill="none" stroke="var(--med)" stroke-width="12"
-        stroke-dasharray="{m_len:.1f} {circ:.1f}" stroke-dashoffset="-{m_off:.1f}" stroke-linecap="round"/>
-      <circle cx="70" cy="70" r="{r}" fill="none" stroke="var(--high)" stroke-width="12"
-        stroke-dasharray="{h_len:.1f} {circ:.1f}" stroke-dashoffset="-{h_off:.1f}" stroke-linecap="round"/>
-    </svg>
-    <div class="ring-label">
-      <div class="number">{total}</div>
-      <div class="sub">findings</div>
-    </div>
-  </div>
-  <div>
-    <div style="font-size:14px;color:var(--text2);margin-bottom:4px">Overall Health</div>
-    <div style="font-size:28px;font-weight:800;color:{grade_color};margin-bottom:8px">{grade}</div>
-    <div style="font-size:13px;color:var(--text3);line-height:1.6">
-      {high} critical issue{'s' if high != 1 else ''} requiring immediate attention<br>
-      {med} improvement{'s' if med != 1 else ''} recommended<br>
-      {low} informational suggestion{'s' if low != 1 else ''}
-    </div>
-  </div>
-</div>"""
-
-
-def _severity_cards(high: int, med: int, low: int, total: int) -> str:
-    """Generate severity summary cards."""
-    return f"""<div class="sev-cards">
-  <div class="sev-card total"><div class="val">{total}</div><div class="lbl">Total Findings</div></div>
-  <div class="sev-card high"><div class="val">{high}</div><div class="lbl">High Severity</div></div>
-  <div class="sev-card med"><div class="val">{med}</div><div class="lbl">Medium Severity</div></div>
-  <div class="sev-card low"><div class="val">{low}</div><div class="lbl">Low Severity</div></div>
-</div>"""
-
-
-def _pillar_heatmap(by_pillar: dict[str, list[dict]]) -> str:
-    """Generate pillar heatmap grid."""
-    cells = []
+def _donut_row(by_pillar: dict[str, list[dict]], res_count: int) -> str:
+    """Generate the pillar overview cards with icon and severity count circles."""
+    cards = []
     for pillar in PILLAR_ORDER:
         findings = by_pillar.get(pillar, [])
-        icon = PILLAR_ICONS.get(pillar, '📋')
+        check_count = PILLAR_CHECK_COUNTS.get(pillar, 1)
+        total_for_pillar = res_count * check_count
+        finding_count = len(findings)
+        passed_count = max(total_for_pillar - finding_count, 0)
+
         h = sum(1 for f in findings if f['severity'] == 'HIGH')
         m = sum(1 for f in findings if f['severity'] == 'MEDIUM')
         lo = sum(1 for f in findings if f['severity'] == 'LOW')
-        h_cls = 'zero' if h == 0 else ''
-        m_cls = 'zero' if m == 0 else ''
-        l_cls = 'zero' if lo == 0 else ''
-        cells.append(f"""<div class="hm-cell">
-      <div class="icon">{icon}</div>
-      <div class="name">{html.escape(pillar)}</div>
-      <div class="counts">
-        <span class="dot h {h_cls}">{h}</span>
-        <span class="dot m {m_cls}">{m}</span>
-        <span class="dot l {l_cls}">{lo}</span>
-      </div>
-    </div>""")
-    return f"""<div class="heatmap">
-  <h2>Findings by Pillar</h2>
-  <div style="display:flex;gap:12px;margin-bottom:16px;font-size:12px;color:var(--text3)">
-    <span><span class="dot h" style="width:16px;height:16px;font-size:9px;vertical-align:middle">H</span> High</span>
-    <span><span class="dot m" style="width:16px;height:16px;font-size:9px;vertical-align:middle">M</span> Medium</span>
-    <span><span class="dot l" style="width:16px;height:16px;font-size:9px;vertical-align:middle">L</span> Low</span>
-  </div>
-  <div class="heatmap-grid">{''.join(cells)}</div>
-</div>"""
+
+        icon = PILLAR_ICONS.get(pillar, '📋')
+        short = PILLAR_SHORT.get(pillar, pillar)
+
+        h_cls = ' cnt-zero' if h == 0 else ''
+        m_cls = ' cnt-zero' if m == 0 else ''
+        l_cls = ' cnt-zero' if lo == 0 else ''
+        p_cls = ' cnt-zero' if passed_count == 0 else ''
+
+        cards.append(
+            f'<div class="pillar-card">'
+            f'<div class="p-icon">{icon}</div>'
+            f'<div class="p-name">{html.escape(short)}</div>'
+            f'<div class="p-counts">'
+            f'<span class="cnt cnt-h{h_cls}" title="High">{h}</span>'
+            f'<span class="cnt cnt-m{m_cls}" title="Medium">{m}</span>'
+            f'<span class="cnt cnt-l{l_cls}" title="Low">{lo}</span>'
+            f'<span class="cnt cnt-p{p_cls}" title="Passed">{passed_count}</span>'
+            f'</div>'
+            f'</div>'
+        )
+
+    legend = (
+        '<div style="display:flex;gap:14px;font-size:11px;color:#636e72;margin-bottom:12px">'
+        '<span><span class="cnt cnt-h" style="width:18px;height:18px;font-size:9px">H</span> High</span>'
+        '<span><span class="cnt cnt-m" style="width:18px;height:18px;font-size:9px">M</span> Medium</span>'
+        '<span><span class="cnt cnt-l" style="width:18px;height:18px;font-size:9px">L</span> Low</span>'
+        '<span><span class="cnt cnt-p" style="width:18px;height:18px;font-size:9px">✓</span> Passed</span>'
+        '</div>'
+    )
+
+    return f'{legend}\n<div class="pillar-row">\n{"".join(cards)}\n</div>'
 
 
-def _resource_table(by_resource: dict[str, list[dict]]) -> str:
-    """Generate the findings-by-resource table."""
+def _resource_type_from_name(name: str) -> tuple[str, str]:
+    """Extract resource type and clean name from a resource identifier.
+
+    Args:
+        name: Resource name, possibly prefixed with type (e.g., 'endpoint/my-ep')
+
+    Returns:
+        Tuple of (type_label, clean_name)
+    """
+    type_map = {
+        'endpoint': ('Endpoint', 'endpoints'),
+        'training_job': ('Training Job', 'jobs'),
+        'notebook': ('Notebook', 'notebook-instances'),
+        'model': ('Model', 'models'),
+    }
+    for prefix, (label, _) in type_map.items():
+        if name.startswith(f'{prefix}/'):
+            return label, name[len(prefix) + 1 :]
+    return 'Resource', name
+
+
+def _console_url(resource_name: str, region: str = 'us-east-1') -> str:
+    """Build an AWS Console URL for a SageMaker resource.
+
+    Args:
+        resource_name: Resource name, possibly prefixed with type
+        region: AWS region
+
+    Returns:
+        Console URL string
+    """
+    path_map = {
+        'endpoint': 'endpoints',
+        'training_job': 'jobs',
+        'notebook': 'notebook-instances',
+        'model': 'models',
+    }
+    for prefix, path in path_map.items():
+        if resource_name.startswith(f'{prefix}/'):
+            clean = resource_name[len(prefix) + 1 :]
+            return f'https://{region}.console.aws.amazon.com/sagemaker/home?region={region}#/{path}/{clean}'
+    return '#'
+
+
+def _affected_resources_table(resource_names: list[str], region: str = 'us-east-1') -> str:
+    """Build an HTML table of affected resources with type and console link.
+
+    Args:
+        resource_names: List of resource identifiers
+        region: AWS region for console links
+
+    Returns:
+        HTML table string
+    """
     rows = []
+    for name in resource_names:
+        type_label, clean_name = _resource_type_from_name(name)
+        url = _console_url(name, region)
+        rows.append(
+            f'<tr>'
+            f'<td><code>{html.escape(clean_name)}</code></td>'
+            f'<td><span class="badge pass" style="background:#dfe6e9;color:#2d3436">{type_label}</span></td>'
+            f'<td><a href="{url}" target="_blank" style="color:#0984e3;font-size:12px">Open in Console ↗</a></td>'
+            f'</tr>'
+        )
+    return (
+        f'<table style="margin-top:10px">'
+        f'<thead><tr><th>Resource</th><th>Type</th><th>Console</th></tr></thead>'
+        f'<tbody>{"".join(rows)}</tbody></table>'
+    )
+
+
+def _pillar_section(pillar: str, findings: list[dict], res_count: int, region: str = 'us-east-1') -> str:
+    """Generate a pillar section with collapsible finding details."""
+    anchor = PILLAR_ANCHORS.get(pillar, pillar.lower())
+    check_count = PILLAR_CHECK_COUNTS.get(pillar, 1)
+    total_for_pillar = res_count * check_count
+    finding_count = len(findings)
+    passed = total_for_pillar - finding_count
+    h = sum(1 for f in findings if f['severity'] == 'HIGH')
+    m = sum(1 for f in findings if f['severity'] == 'MEDIUM')
+    lo = sum(1 for f in findings if f['severity'] == 'LOW')
+
+    summary_badges = []
+    if h:
+        summary_badges.append(f'<span class="badge high">{h} High</span>')
+    if m:
+        summary_badges.append(f'<span class="badge medium">{m} Medium</span>')
+    if lo:
+        summary_badges.append(f'<span class="badge low">{lo} Low</span>')
+    if passed:
+        summary_badges.append(f'<span class="badge pass">{passed} Passed</span>')
+
+    # Group findings by check
+    by_check: dict[str, list[dict]] = {}
+    for f in findings:
+        by_check.setdefault(f['check'], []).append(f)
+
+    # Sort checks: HIGH first
+    sev_order = {'HIGH': 0, 'MEDIUM': 1, 'LOW': 2}
+    sorted_checks = sorted(
+        by_check.items(),
+        key=lambda x: min(sev_order.get(f['severity'], 3) for f in x[1]),
+    )
+
+    check_details = []
+    for check_id, check_findings in sorted_checks:
+        sev = check_findings[0]['severity']
+        sev_lower = sev.lower()
+        affected_resources = sorted({f['resource'] for f in check_findings})
+        detail_text = check_findings[0]['detail']
+        rec_text = check_findings[0]['recommendation']
+        count = len(check_findings)
+
+        # Build a clean table of affected resources
+        res_table = _affected_resources_table(affected_resources, region)
+
+        check_details.append(
+            f'<details><summary>'
+            f'<span class="badge {sev_lower}">{sev}</span> '
+            f'<code>{html.escape(check_id)}</code> '
+            f'<span style="color:#636e72;font-weight:400;font-size:12px">({count} resource{"s" if count != 1 else ""})</span>'
+            f'</summary><div class="detail-body">'
+            f'<p style="margin-bottom:6px">{html.escape(detail_text)}</p>'
+            f'<div class="rec">💡 {html.escape(rec_text)}</div>'
+            f'{res_table}'
+            f'</div></details>'
+        )
+
+    return (
+        f'<h2 id="{anchor}">{html.escape(pillar)}</h2>\n'
+        f'<p style="margin-bottom:12px">{" ".join(summary_badges)}</p>\n'
+        f'{"".join(check_details)}'
+    )
+
+
+def _priority_section(findings: list[dict], region: str = 'us-east-1') -> str:
+    """Generate the top priority remediation section."""
+    high_findings = [f for f in findings if f['severity'] == 'HIGH']
+
+    # Deduplicate by check — show each check once with count
+    by_check: dict[str, dict] = {}
+    for f in high_findings:
+        check = f['check']
+        if check not in by_check:
+            by_check[check] = {
+                'check': check,
+                'pillar': f['pillar'],
+                'detail': f['detail'],
+                'recommendation': f['recommendation'],
+                'count': 0,
+                'resources': set(),
+            }
+        by_check[check]['count'] += 1
+        by_check[check]['resources'].add(f['resource'])
+
+    # Sort by count descending
+    sorted_items = sorted(by_check.values(), key=lambda x: x['count'], reverse=True)[:10]
+
+    items = []
+    for item in sorted_items:
+        res_sorted = sorted(item['resources'])
+        res_table = _affected_resources_table(res_sorted, region)
+
+        items.append(
+            f'<div class="priority-item"><div>'
+            f'<strong>{html.escape(item["check"])}</strong> '
+            f'<span class="meta">({item["pillar"]} · {item["count"]} resources)</span>'
+            f'<p style="font-size:13px;margin-top:4px">{html.escape(item["detail"])}</p>'
+            f'<div class="rec">💡 {html.escape(item["recommendation"])}</div>'
+            f'{res_table}'
+            f'</div></div>'
+        )
+
+    if not items:
+        items.append('<p style="color:#00b894;font-weight:600">No HIGH severity findings. Nice work!</p>')
+
+    return (
+        f'<h2 id="priority">Top Priority Remediation</h2>\n'
+        f'<div class="priority-list">{"".join(items)}</div>'
+    )
+
+
+def _resource_section(by_resource: dict[str, list[dict]]) -> str:
+    """Generate the resource details table."""
     sorted_res = sorted(
         by_resource.items(),
         key=lambda x: sum(1 for f in x[1] if f['severity'] == 'HIGH'),
         reverse=True,
     )
+
+    rows = []
     for res_name, findings in sorted_res:
         h = sum(1 for f in findings if f['severity'] == 'HIGH')
         m = sum(1 for f in findings if f['severity'] == 'MEDIUM')
         lo = sum(1 for f in findings if f['severity'] == 'LOW')
         total = len(findings)
-        bar_w = min(total * 4, 120)
-        h_w = int(bar_w * h / total) if total else 0
-        m_w = int(bar_w * m / total) if total else 0
-        l_w = bar_w - h_w - m_w
-        rows.append(f"""<tr>
-      <td><span class="res-name">{html.escape(res_name)}</span></td>
-      <td>{total}</td>
-      <td style="color:var(--high);font-weight:600">{h}</td>
-      <td style="color:var(--med);font-weight:600">{m}</td>
-      <td style="color:var(--low);font-weight:600">{lo}</td>
-      <td>
-        <div style="display:flex;height:8px;border-radius:4px;overflow:hidden;width:{bar_w}px;background:var(--surface3)">
-          <div style="width:{h_w}px;background:var(--high)"></div>
-          <div style="width:{m_w}px;background:var(--med)"></div>
-          <div style="width:{l_w}px;background:var(--low)"></div>
-        </div>
-      </td>
-    </tr>""")
-    return f"""<div class="res-table">
-  <h2>Findings by Resource</h2>
-  <table>
-    <thead><tr><th>Resource</th><th>Total</th><th>High</th><th>Medium</th><th>Low</th><th>Distribution</th></tr></thead>
-    <tbody>{''.join(rows)}</tbody>
-  </table>
-</div>"""
 
+        badges = []
+        if h:
+            badges.append(f'<span class="badge high">{h}</span>')
+        if m:
+            badges.append(f'<span class="badge medium">{m}</span>')
+        if lo:
+            badges.append(f'<span class="badge low">{lo}</span>')
 
-def _pillar_section(pillar: str, findings: list[dict]) -> str:
-    """Generate a pillar findings section with table."""
-    icon = PILLAR_ICONS.get(pillar, '📋')
-    color = PILLAR_COLORS.get(pillar, '#888')
-    total = len(findings)
-    h = sum(1 for f in findings if f['severity'] == 'HIGH')
-    m = sum(1 for f in findings if f['severity'] == 'MEDIUM')
-    lo = sum(1 for f in findings if f['severity'] == 'LOW')
-    bar_total = max(total, 1)
-    h_pct = h / bar_total * 100
-    m_pct = m / bar_total * 100
-    l_pct = lo / bar_total * 100
+        rows.append(
+            f'<tr>'
+            f'<td><code>{html.escape(res_name)}</code></td>'
+            f'<td>{total}</td>'
+            f'<td>{" ".join(badges)}</td>'
+            f'</tr>'
+        )
 
-    sev_order = {'HIGH': 0, 'MEDIUM': 1, 'LOW': 2}
-    sorted_findings = sorted(findings, key=lambda f: sev_order.get(f['severity'], 3))
-
-    rows = []
-    for f in sorted_findings:
-        sev = f['severity']
-        rows.append(f"""<tr>
-      <td><span class="badge badge-{sev}">{sev}</span></td>
-      <td><span class="check-id">{html.escape(f.get('check', ''))}</span></td>
-      <td><span class="resource-tag">{html.escape(f.get('resource', ''))}</span></td>
-      <td>
-        <div class="detail">{html.escape(f.get('detail', ''))}</div>
-        <div class="rec">💡 {html.escape(f.get('recommendation', ''))}</div>
-      </td>
-    </tr>""")
-
-    return f"""<div class="pillar">
-  <div class="pillar-head" style="border-left:4px solid {color}">
-    <span class="pill-icon">{icon}</span>
-    <span class="pill-name">{html.escape(pillar)}</span>
-    <span class="pill-count">{total} finding{'s' if total != 1 else ''}</span>
-    <div class="pill-bar">
-      <span style="width:{h_pct:.0f}%;background:var(--high)"></span>
-      <span style="width:{m_pct:.0f}%;background:var(--med)"></span>
-      <span style="width:{l_pct:.0f}%;background:var(--low)"></span>
-    </div>
-  </div>
-  <table>
-    <thead><tr><th style="width:90px">Severity</th><th style="width:180px">Check</th><th style="width:180px">Resource</th><th>Detail &amp; Recommendation</th></tr></thead>
-    <tbody>{''.join(rows)}</tbody>
-  </table>
-</div>"""
-
-
-def _footer(ts: str) -> str:
-    """Generate the HTML footer."""
-    return f"""</div>
-<div class="footer">
-  Generated by Amazon SageMaker Well-Architected MCP Server &middot; {ts}
-</div>
-</body>
-</html>"""
+    return (
+        f'<h2 id="resources">Resource Details</h2>\n'
+        f'<table><thead><tr><th>Resource</th><th>Findings</th><th>Severity Breakdown</th></tr></thead>'
+        f'<tbody>{"".join(rows)}</tbody></table>'
+    )

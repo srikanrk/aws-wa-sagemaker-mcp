@@ -688,6 +688,8 @@ class WellArchitectedValidationHandler:
                         arn = info.get('EndpointArn', '')
                         tags = sm.list_tags(ResourceArn=arn).get('Tags', []) if arn else []
                         findings = run_all_validators(RESOURCE_ENDPOINT, info, tags, region_name)
+                        for f in findings:
+                            f['resource'] = f'endpoint/{f["resource"]}'
                         all_findings.extend(findings)
                         validated.append(f'endpoint/{name}')
                     except ClientError as e:
@@ -711,6 +713,8 @@ class WellArchitectedValidationHandler:
                         findings = run_all_validators(
                             RESOURCE_TRAINING_JOB, info, tags, region_name
                         )
+                        for f in findings:
+                            f['resource'] = f'training_job/{f["resource"]}'
                         all_findings.extend(findings)
                         validated.append(f'training_job/{name}')
                     except ClientError as e:
@@ -730,6 +734,8 @@ class WellArchitectedValidationHandler:
                         arn = info.get('NotebookInstanceArn', '')
                         tags = sm.list_tags(ResourceArn=arn).get('Tags', []) if arn else []
                         findings = run_all_validators(RESOURCE_NOTEBOOK, info, tags, region_name)
+                        for f in findings:
+                            f['resource'] = f'notebook/{f["resource"]}'
                         all_findings.extend(findings)
                         validated.append(f'notebook/{name}')
                     except ClientError as e:
@@ -755,6 +761,8 @@ class WellArchitectedValidationHandler:
                         arn = info.get('ModelArn', '')
                         tags = sm.list_tags(ResourceArn=arn).get('Tags', []) if arn else []
                         findings = run_all_validators(RESOURCE_MODEL, info, tags, region_name)
+                        for f in findings:
+                            f['resource'] = f'model/{f["resource"]}'
                         all_findings.extend(findings)
                         validated.append(f'model/{name}')
                     except ClientError as e:
