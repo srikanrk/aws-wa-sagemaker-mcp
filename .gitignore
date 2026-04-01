@@ -11,3 +11,9 @@ wheels/
 
 # Generated reports
 wa-report.html
+
+# HTML reports
+*.html
+
+# Kiro local settings
+.kiro/
