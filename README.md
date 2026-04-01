@@ -6,7 +6,7 @@ The Amazon SageMaker Well-Architected MCP server provides agents with tools to v
 
 ### Well-Architected Validation
 
-Provides comprehensive tools for validating SageMaker resources (endpoints, training jobs, notebook instances, and models) against AWS best practices across all six Well-Architected pillars. Each validation returns findings with severity levels and actionable recommendations. See the [validators documentation](https://github.com/awslabs/mcp/blob/main/src/sagemaker-wa-mcp-server/awslabs/sagemaker_wa_mcp_server/README.md) for detailed information on the supported tools.
+Provides comprehensive tools for validating SageMaker resources (endpoints, training jobs, notebook instances, and models) against AWS best practices across all six Well-Architected pillars. Each validation returns findings with severity levels and actionable recommendations. See the [validators documentation](awslabs/sagemaker_wa_mcp_server/README.md) for detailed information on the supported tools.
 
 ## Prerequisites
 
