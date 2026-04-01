@@ -1,0 +1,19 @@
+{
+  "mcpServers": {
+    "awslabs.sagemaker-wa-mcp-server": {
+      "command": "uv",
+      "args": [
+        "run",
+        "--directory",
+        "/Users/srikanrk/Documents/projects/aws-sagamaker-mcp-server",
+        "awslabs.sagemaker-wa-mcp-server",
+        "--allow-sensitive-data-access"
+      ],
+      "env": {
+        "FASTMCP_LOG_LEVEL": "ERROR"
+      },
+      "autoApprove": [],
+      "disabled": false
+    }
+  }
+}
